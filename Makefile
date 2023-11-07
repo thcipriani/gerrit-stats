@@ -3,9 +3,12 @@ SHELL := /bin/bash
 all: clean data/last-update.txt data/repos.csv
 	mkdir -p data
 	< data/repos.csv parallel -d "\r\n" -C, 'bash 01-get-meta-refs.sh {1} {2} {3} "$(shell cat data/last-update.txt)"'
-	< data/repos.csv parallel -d "\r\n" -C, 'python3 03-walk-repos.py --name {1} --safe-path {2} --repo {3} --new-shas "data/{2}-meta-refs.csv" --out-dir data'
-	bash 04-create-db.sh 'gerrit.db'
-	< <(ls data/*.db) bash 05-merge-dbs.sh 'gerrit.db'
+	< data/repos.csv parallel -d "\r\n" -C, 'python3 02-walk-repos.py --name {1} --safe-path {2} --repo {3} --new-shas "data/{2}-meta-refs.csv" --out-dir data'
+	bash 03-create-db.sh 'gerrit.db'
+	< <(ls data/*.db) bash 04-merge-dbs.sh 'gerrit.db'
+	echo 'select distict author_id from changes where author_id not in (select id from authors);' | sqlite3 gerrit.db > data/author-ids.txt
+	python3 05-get-authors.py --author-file data/author-ids.txt --output-file data/authors.db
+	bash 06-add-user-table.sh 'gerrit.db' 'data/authors.db'
 	date +%Y-%m-%d > LAST_RUN
 
 clean:

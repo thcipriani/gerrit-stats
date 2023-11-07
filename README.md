@@ -12,10 +12,15 @@ I use the [myrepos][mr] tool `mr` to do this:
 
 First I create an .mrconfig file:
 
+    mkdir -p /srv/git
+    cp ./_setup-srv_git.sh /srv/git/update.sh
     cd /srv/git
-    ./000-setup-srv_git.sh
+    ./update.sh
 
-Then run make:
+This clones all reapos from gerrit.wikimedia.org into `/srv/git`. It's going
+to take some time.
+
+Then inside this repo run make:
 
     make
 
@@ -31,13 +36,17 @@ This is a terrible local hadoop using gnu parallel and a bunch of shell scripts.
    `refs/changes/*/*/meta` refs in the repos. On subsequent runs, it will
    gather all changes since the last run for each ref. On the first run,
    it will only gather refs.
-3. `03-walk-repos.py` takes a csv of repos, and the csv of refs, and
+3. `02-walk-repos.py` takes a csv of repos, and the csv of refs, and
    outputs a sqlite database of all patches, reviewer adds, comments, and
    label votes (e.g., "Code-Review=+2")
-4. `04-create-db.sh` creates a single sqlite database that has the same
+4. `03-create-db.sh` creates a single sqlite database that has the same
    schema as the individual databases created by `03-walk-repos.py`.
-5. `05-merge-dbs.sh` mashes together all the individual databases into a
+5. `04-merge-dbs.sh` mashes together all the individual databases into a
    single database.
+6. `05-get-authors.py` takes all the author ids and queries gerrit in batches
+   of 50 to get the author's username. It outputs a database of authors and
+   their affiliation (`is_wmf`, `is_wmde`, `was_wmf`, `was_wmde`—it's not perfect).
+7. `06-add-user-table.sh` adds new users to the `gerrit.db` database.
 
 TODO
 ----
