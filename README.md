@@ -1,12 +1,14 @@
 README for gerrit-stats
 =======================
 
-This is a simple tool to generate statistics from a gerrit server.
+This is a simple tool to generate statistics from Wikimedia's Gerrit server.
 
 Usage
 -----
 
-Setup a local clone of everything on the gerrit server. I use the MyRepos tool `mr` to do this:
+Setup a local clone of every public repo on gerrit.wikimedia.org.
+
+I use the [myrepos][mr] tool `mr` to do this:
 
 First I create an .mrconfig file:
 
@@ -72,3 +74,4 @@ Biggest +2er by repo:
     order by count desc;
 
 
+[mr]: http://myrepos.branchable.com/
