@@ -17,7 +17,7 @@ echo 'repo,objectname,refname,commit' > "$OUT_PATH"
 if [[ "$LAST_UPDATE" == "never" ]]; then
     git -C "$REPO_DIR" for-each-ref refs/changes/*/*/meta --format="${REPO_DIR},%(objectname),%(refname),0" >> "$OUT_PATH"
 else
-    git -C "$REPO_DIR" for-each-ref refs/changes/*/*/meta --format="${REPO_DIR} %(objectname) %(refname)" \
+    git -C "$REPO_DIR" for-each-ref --sort=-committerdate --format="${REPO_DIR} %(objectname) %(refname) %(committerdate:unix)" refs/changes/*/*/meta | awk -v last_update="$LAST_UPDATE" '$4 > last_update { print $1, " ", $2, " ", $3 }' \
     | while read -r R OBJECTNAME REFNAME; do
         git -C "$R" log --format=%H --after "$LAST_UPDATE" "$OBJECTNAME" \
         | awk -v repo="$R" -v objectname="$OBJECTNAME" -v refname="$REFNAME" '{print repo "," objectname "," refname "," $0}'

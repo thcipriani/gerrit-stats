@@ -9,7 +9,7 @@ all: clean data/last-update.txt data/repos.csv
 	echo 'select distict author_id from changes where author_id not in (select id from authors);' | sqlite3 gerrit.db > data/author-ids.txt
 	python3 05-get-authors.py --author-file data/author-ids.txt --output-file data/authors.db
 	bash 06-add-user-table.sh 'gerrit.db' 'data/authors.db'
-	date +%Y-%m-%d > LAST_RUN
+	 echo 'select date from changes order by date desc limit 1;' | sqlite3 gerrit.db > LAST_RUN
 
 clean:
 	rm -rf data
