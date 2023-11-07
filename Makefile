@@ -19,4 +19,4 @@ data/last-update.txt:
 
 data/repos.csv:
 	mkdir -p data
-	python3 00-get-repos.py "/srv/git" "/srv/git/mediawiki/tools"
+	python3 00-get-repos.py "/srv/git" "/srv/git"
