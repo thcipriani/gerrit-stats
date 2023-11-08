@@ -2,8 +2,9 @@
 
 import argparse
 import collections
-import sqlite3
+import os
 import re
+import sqlite3
 
 import pandas as pd
 
@@ -56,11 +57,50 @@ def save_change(commit, conn, patchset, patch, repo_name):
         (repo_name, patchset, patch, commit.sha, commit.date, commit.author, t, commit.status, l, v, bot_like))
 
 def do_save(commits, conn, repo_name):
+    # TODO: this "if" is a hack...
+    last_patchset = None
+    last_patch = None
+    if not [c for c in commits if isinstance(c, Patch)]:
+        # Happens when commits are made to the previous patchset
+        # But there's no new patch later
+        # And the old patch is already in the db
+        patchsets = [co.ps.patchset for co in commits]
+        if len(set(patchsets)) > 1:
+            raise Exception("Multiple patchsets in a single commit")
+        last_patchset = commits[0].ps.patchset
+
+        patches = [int(l.message[0].split(' ')[-1]) for l in commits if l.message[0].lower().startswith('update patch set')]
+        if len(set(patches)) > 1:
+            raise Exception("Multiple patches in a single commit")
+        else:
+            last_patch = patches[0]
+
+    mistake = False
     for commit in commits:
+        if mistake:
+            print(f"MISTAKE! {repo_name} {last_patchset} {last_patch}")
+            last_patchset = None
+            last_patch = None
+            mistake = False
         if isinstance(commit, Patch):
             last_patchset = commit.ps.patchset
             last_patch = commit.patch
-        save_change(commit, conn, last_patchset, last_patch, repo_name)
+        if last_patchset is None:
+            # Happens when commits are made to the previous patchset
+            # And there's a new patch later
+            # And the old patch is already in the db
+            last_patchset = commit.ps.patchset
+            mistake = True
+        if last_patch is None:
+            # Happens when commits are made to the previous patchset
+            # And there's a new patch later
+            # And the old patch is already in the db
+            last_patch = int([m for m in commit.message if m.lower().startswith('update patch set')][0].split(' ')[-1])
+            mistake = True
+        try:
+            save_change(commit, conn, last_patchset, last_patch, repo_name)
+        except:
+            import pdb; pdb.set_trace()
 
 def get_commit_author_id(commit):
     if commit.author.email == 'gerrit@wikimedia.org':
@@ -350,7 +390,7 @@ class Patchset(object):
             self.known_reviewers.add(reviewer.reviewer)
         return False
 
-    def walk(self, known):
+    def walk(self, unknown):
         """
         Each commit is either:
         - A patch
@@ -360,7 +400,7 @@ class Patchset(object):
         """
         for commit in self.repo.walk(self.ref.target, pygit2.GIT_SORT_REVERSE):
             # 0 will only be here if it's the first time we've run this
-            if 0 not in known and commit.hex not in known:
+            if 0 not in unknown and commit.hex not in unknown:
                 continue
             mc = MetaCommit(commit)
             # print('    - Processing commit %s' % mc.sha)
@@ -395,6 +435,7 @@ def parse_args():
     ap.add_argument('--name', help='Name of the repo')
     ap.add_argument('--repo', help='Path to the repo')
     ap.add_argument('--new-shas', help='csv of new shas')
+    ap.add_argument('--known-reviewers', help='csv of known reviewers')
     ap.add_argument('--safe-path', help='safe path name for db')
     ap.add_argument('--out-dir', help='where to put the output')
     return ap.parse_args()
@@ -408,10 +449,22 @@ def main():
     # Get known shas from the csv, grouped by individual ref names
     print('Processing %s' % args.name)
     known_shas = df.groupby('refname')['commit'].apply(list).to_dict()
+    if os.path.isfile(args.known_reviewers):
+        df_reviewers = pd.read_csv(args.known_reviewers)
+        known_reviewers = df_reviewers.groupby('patchset')['author_id'].apply(set).to_dict()
+    else:
+        known_reviewers = {}
     for ref, known in known_shas.items():
         print('Processing %s - %s' % (args.name, ref))
         count = 0
-        for commit in Patchset(repo, repo.lookup_reference(ref)).walk(set(known)):
+        ps = Patchset(repo, repo.lookup_reference(ref))
+        ps.known_reviewers = known_reviewers.get(ps.patchset, set())
+        for commit in ps.walk(set(known)):
+            if not commit:
+                print(f'    - Empty commit for {ref}')
+                # This happens if someone does something with attentionsets
+                # Which we don't track...
+                continue
             if isinstance(commit, list):
                 for c in commit:
                     print('    - %s' % c)
