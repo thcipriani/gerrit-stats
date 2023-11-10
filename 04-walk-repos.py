@@ -25,82 +25,31 @@ def create_database(filename):
             author_id INTEGER NOT NULL,
             status TEXT,
             type TEXT NOT NULL,
-            label TEXT,
-            value INTEGER,
+            vote TEXT,
             bot_like INTEGER NOT NULL
          )""")
 
     return conn
 
-def save_change(commit, conn, patchset, patch, repo_name):
-    t = 'unknown'
+def save_change(commit, conn, repo_name):
     bot_like = 1 if commit.bot_like else 0
-    if isinstance(commit, Patch):
-        t = 'patch'
-        l = None
-        v = None
-    if isinstance(commit, Comment):
-        t = 'comment'
-        l = None
-        v = None
-    if isinstance(commit, Label):
-        t = 'label'
-        l = commit.type
-        v = commit.vote
-    if isinstance(commit, Reviewer):
-        t = 'reviewer'
-        l = None
-        v = None
     conn.execute("""
-        INSERT INTO changes (repo, patchset, patch, sha, date, author_id, type, status, label, value, bot_like)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (repo_name, patchset, patch, commit.sha, commit.date, commit.author, t, commit.status, l, v, bot_like))
+        INSERT INTO changes (repo, patchset, patch, sha, date, author_id, type, status, vote, bot_like)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (repo_name,
+         commit.ps.patchset,
+         commit.patch,
+         commit.sha,
+         commit.date,
+         commit.author,
+         commit.type,
+         commit.status,
+         commit.vote,
+         bot_like))
 
 def do_save(commits, conn, repo_name):
-    # TODO: this "if" is a hack...
-    last_patchset = None
-    last_patch = None
-    if not [c for c in commits if isinstance(c, Patch)]:
-        # Happens when commits are made to the previous patchset
-        # But there's no new patch later
-        # And the old patch is already in the db
-        patchsets = [co.ps.patchset for co in commits]
-        if len(set(patchsets)) > 1:
-            raise Exception("Multiple patchsets in a single commit")
-        last_patchset = commits[0].ps.patchset
-
-        patches = [int(l.message[0].split(' ')[-1]) for l in commits if l.message[0].lower().startswith('update patch set')]
-        if len(set(patches)) > 1:
-            raise Exception("Multiple patches in a single commit")
-        else:
-            last_patch = patches[0]
-
-    mistake = False
     for commit in commits:
-        if mistake:
-            print(f"MISTAKE! {repo_name} {last_patchset} {last_patch}")
-            last_patchset = None
-            last_patch = None
-            mistake = False
-        if isinstance(commit, Patch):
-            last_patchset = commit.ps.patchset
-            last_patch = commit.patch
-        if last_patchset is None:
-            # Happens when commits are made to the previous patchset
-            # And there's a new patch later
-            # And the old patch is already in the db
-            last_patchset = commit.ps.patchset
-            mistake = True
-        if last_patch is None:
-            # Happens when commits are made to the previous patchset
-            # And there's a new patch later
-            # And the old patch is already in the db
-            last_patch = int([m for m in commit.message if m.lower().startswith('update patch set')][0].split(' ')[-1])
-            mistake = True
-        try:
-            save_change(commit, conn, last_patchset, last_patch, repo_name)
-        except:
-            import pdb; pdb.set_trace()
+        save_change(commit, conn, repo_name)
 
 def get_commit_author_id(commit):
     if commit.author.email == 'gerrit@wikimedia.org':
@@ -108,13 +57,11 @@ def get_commit_author_id(commit):
     return int(commit.author.email.split('@')[0])
 
 
-class MetaCommit(object):
+class Comments(object):
     def __init__(self, commit):
         self.commit = commit
-        self.author = get_commit_author_id(commit)
-        self.date = commit.author.time
-        self.sha = commit.hex
         self.trailer_re = re.compile(r'(?P<key>[a-zA-Z-_]+)+:\s?(?P<value>.*)')
+        self._patch = None
         self._comments = None
         self._trailers = None
 
@@ -140,6 +87,116 @@ class MetaCommit(object):
         return self._trailers
 
     @property
+    def has_real_comments(self):
+        return len(self._patch_comments()) > 0
+
+    @property
+    def has_new_patch_comments(self):
+        return len(self._newpatchpatchset_comments()) > 0
+
+    @property
+    def comments(self):
+        if self._comments is None:
+            self._comments = [
+                l for l in self.commit.message.splitlines()
+                if l.strip() and
+                   l.split(':')[0] not in self.trailers
+            ]
+        return self._comments
+
+    @property
+    def is_status_update(self):
+        return self._status_update_comments() != []
+
+    @property
+    def is_recheck(self):
+        if not self.is_status_update:
+            return False
+        return [l for l
+                in self._patch_comments()
+                if l.lower().startswith('recheck')] != []
+
+    @property
+    def is_abandon(self):
+        if not self.is_status_update:
+            return False
+        return [l for l
+                in self._patch_comments()
+                if l.lower().startswith('abandoned')] != []
+
+    @property
+    def is_rebase(self):
+        if not self.has_new_patch_comments:
+            return False
+
+        return [l for l
+                in self._patch_comments()
+                if l.lower().endswith('rebased.')] != []
+
+    @property
+    def patch(self):
+        if self._patch is None:
+            patch = self.trailers.get(
+                'Patch-set',
+                self._patch_from_comments()
+            )
+            if patch is not None:
+                patch = int(patch)
+            self._patch = patch
+        return self._patch
+
+    def _patch_from_comments(self):
+        if not self.is_status_update:
+            return None
+        return self.commit.message.splitlines()[0].split(' ')[-1]
+
+    def _newpatch_line(self, line):
+        l = line.lower()
+        return (l.startswith('create change') or
+                l.startswith('uploaded patch set') or
+                l.startswith('create patch set'))
+
+    def _status_line(self, line):
+        return line.lower().startswith('update patch set')
+
+    def _status_update_comments(self):
+        return [
+            l for l in self.comments
+            if self._status_line(l)
+        ]
+
+    def _newpatchpatchset_comments(self):
+        return [
+            l for l in self.comments
+            if self._newpatch_line(l)
+        ]
+
+    def _patch_comments(self):
+        """
+        Real actual comments only
+        """
+        return [
+            l for l in self.comments
+            if (
+                not self._newpatch_line(l)
+                and not self._status_line(l)
+            )
+        ]
+
+
+class MetaCommit(object):
+    def __init__(self, commit):
+        self.type = 'meta'
+        self.vote = None
+        self.commit = commit
+        self.author = get_commit_author_id(commit)
+        self.date = commit.author.time
+        self.sha = commit.hex
+        self.comments = Comments(commit)
+        self.patch = self.get_patch()
+        self.trailers = self.comments.trailers
+
+    @property
     def is_reviewer(self):
         reviewer = self.trailers.get('Reviewer', None)
         return reviewer is not None
@@ -157,7 +214,7 @@ class MetaCommit(object):
     def is_patch(self):
         is_ps = self.trailers.get('Patch-set', None) is not None
         return is_ps and \
-            self.has_new_patch_comments()
+            self.comments.has_new_patch_comments
 
     @property
     def is_comment(self):
@@ -165,8 +222,8 @@ class MetaCommit(object):
         Inline comments, but not a new patchset
         Or patch comments
         """
-        has_real_comments = len(self._patch_comments()) > 0
-        return self.has_inline_comments() or has_real_comments
+        self.has_inline_comments() or \
+            self.comments.has_real_comments
 
     @property
     def is_botlike(self):
@@ -176,6 +233,23 @@ class MetaCommit(object):
         if tag.startswith('autogenerated') and \
               not tag.endswith('abandon'):
             return True
+
+    def get_patch(self):
+        return self.comments.patch
+
+    def make_comment(self, ps):
+        if self.comments.is_recheck:
+            return Recheck(self.commit, self, ps)
+        if self.comments.is_abandon:
+            return Abandon(self.commit, self, ps)
+        return Comment(self.commit, self, ps)
+
+    def make_patch(self, ps):
+        if self.comments.is_rebase:
+            return Rebase(self.commit, self, ps)
+        if self.patch == 1:
+            return NewPatchSet(self.commit, self, ps)
+        return Patch(self.commit, self, ps)
 
     def make_reviewers(self, ps):
         for reviewer_id in self.get_reviewer_ids():
@@ -192,7 +266,7 @@ class MetaCommit(object):
                 vote = 0
             else:
                 label, vote = label.split('=')
-                # Got to handle: 
+                # Got to handle:
                 # - Label: Code-Review=+2
                 # - Label: Code-Review=+2 Gerrit User <gerrit@wikimedia>
                 vote = int(vote.split(' ')[0])
@@ -209,13 +283,12 @@ class MetaCommit(object):
             elif label == 'SUBM':
                 yield Submit(self.commit, self, ps, vote)
             else:
-                import pdb; pdb.set_trace()
-                raise('Unknown label')
+                raise('Unknown label %s' % label)
 
     def has_inline_comments(self):
         return (
             self.has_updated_tree() and
-            not self.has_new_patch_comments()
+            not self.comments.has_new_patch_comments
         )
 
     def get_reviewer_ids(self):
@@ -223,9 +296,6 @@ class MetaCommit(object):
         for reviewer in self.trailers['Reviewer'].splitlines():
             reviewer_ids.append(int(reviewer.split('<')[1].split('@')[0]))
         return reviewer_ids
-
-    def has_new_patch_comments(self):
-        return len(self._newpatchpatchset_comments()) > 0
 
     def has_updated_tree(self):
         parent_tree = EMPTY_TREE_SHA
@@ -236,45 +306,18 @@ class MetaCommit(object):
         return parent_tree != self.commit.tree.id
 
     def get_comments(self):
-        if self._comments is None:
-            self._comments = [
-                l for l in self.commit.message.splitlines()
-                if l.strip() and
-                   l.split(':')[0] not in self.trailers
-            ]
-        return self._comments
+        return self.comments.comments
 
-    def _newpatch_line(self, line):
-        l = line.lower()
-        return (l.startswith('create change') or
-                l.startswith('uploaded patch set') or
-                l.startswith('create patch set'))
-
-    def _status_line(self, line):
-        return line.lower().startswith('update patch set')
-
-    def _newpatchpatchset_comments(self):
-        return [
-            l for l in self.get_comments()
-            if self._newpatch_line(l)
-        ]
-
-    def _patch_comments(self):
-        """
-        Real actual comments only
-        """
-        return [
-            l for l in self.get_comments()
-            if (
-                not self._newpatch_line(l)
-                and not self._status_line(l)
-            )
-        ]
+    def __repr__(self):
+        return '<%s %s> by %s (%s)' % (
+            self.type, self.patch, self.author, self.status
+        )
 
 
 class Reviewer(MetaCommit):
     def __init__(self, commit, mc, ps, reviewer_id):
         super(Reviewer, self).__init__(commit)
+        self.type = 'reviewer'
         self.update = True
         self.reviewer = reviewer_id
         self.status = mc.trailers.get('Status')
@@ -284,14 +327,11 @@ class Reviewer(MetaCommit):
         self.ps = ps
         self.bot_like = mc.is_botlike
 
-    def __repr__(self):
-        return '<Reviewer %s> addedby %s (%s)' % (
-            self.reviewer, self.author, self.status)
-
 
 class Comment(MetaCommit):
     def __init__(self, commit, mc, ps):
         super(Comment, self).__init__(commit)
+        self.type = 'comment'
         self.update = True
         self.reviewer = self.author
         self.status = mc.trailers.get('Status')
@@ -302,16 +342,22 @@ class Comment(MetaCommit):
         self.bot_like = mc.is_botlike
 
     def __repr__(self):
-        thing = '<Comment %s>' % self.reviewer
+        thing = '<Comment (%s) %s>' % (self.type, self.reviewer)
         thing += ' addedby %s' % self.author
         thing += ' (%s)' % self.status
         if self.bot_like:
             thing += ' (bot)'
         return thing
 
+class Recheck(Comment):
+    def __init__(self, commit, mc, ps):
+        super(Recheck, self).__init__(commit, mc, ps)
+        self.type = 'recheck'
+
 class Label(MetaCommit):
     def __init__(self, commit, mc, ps):
         super(Label, self).__init__(commit)
+        self.type = 'label'
         self.update = True
         self.reviewer = self.author
         self.status = mc.trailers.get('Status')
@@ -326,8 +372,8 @@ class Label(MetaCommit):
 class CodeReview(Label):
     def __init__(self, commit, mc, ps, vote):
         super(CodeReview, self).__init__(commit, mc, ps)
+        self.type = 'codereview'
         self.vote = vote
-        self.type = 'c'
 
     def __repr__(self):
         return '<CodeReview %s> by %s (%s)' % (
@@ -336,8 +382,8 @@ class CodeReview(Label):
 class Verified(Label):
     def __init__(self, commit, mc, ps, vote):
         super(Verified, self).__init__(commit, mc, ps)
+        self.type = 'verified'
         self.vote = vote
-        self.type = 'v'
 
     def __repr__(self):
         return '<Verified %s> by %s (%s)' % (
@@ -346,8 +392,8 @@ class Verified(Label):
 class Submit(Label):
     def __init__(self, commit, mc, ps, vote):
         super(Submit, self).__init__(commit, mc, ps)
+        self.type = 'submit'
         self.vote = vote
-        self.type = 's'
 
     def __repr__(self):
         return '<Submit %s> by %s (%s)' % (
@@ -356,6 +402,7 @@ class Submit(Label):
 class Patch(MetaCommit):
     def __init__(self, commit, mc, ps):
         super(Patch, self).__init__(commit)
+        self.type = 'patch'
         self.patch = int(mc.trailers['Patch-set'])
         self.status = mc.trailers.get('Status')
         self.change_id = mc.trailers.get('Change-id')
@@ -366,11 +413,16 @@ class Patch(MetaCommit):
         self.ps = ps
         self.bot_like = False
 
-    def __repr__(self):
-        return '<Patch %s> by %s (%s)' % (
-            self.patch, self.author, self.status
-        )
+class Rebase(Patch):
+    def __init__(self, commit, mc, ps):
+        super(Rebase, self).__init__(commit, mc, ps)
+        self.type = 'rebase'
 
+class NewPatchSet(Patch):
+    def __init__(self, commit, mc, ps):
+        super(NewPatchSet, self).__init__(commit, mc, ps)
+        self.type = 'newpatchset'
+        self.status = 'new'
 
 class Patchset(object):
     def __init__(self, repo, ref):
@@ -405,7 +457,7 @@ class Patchset(object):
             mc = MetaCommit(commit)
             # print('    - Processing commit %s' % mc.sha)
             if mc.is_patch:
-                patch = Patch(commit, mc, self)
+                patch = mc.make_patch(self)
                 self.patches.append(patch)
                 self.commits.append(patch)
 
@@ -424,7 +476,7 @@ class Patchset(object):
                     self.commits.append(label)
                     self.known_reviewers.add(label.author)
             elif mc.is_comment:
-                comment = Comment(commit, mc, self)
+                comment = mc.make_comment(self)
                 self.commits.append(comment)
                 self.known_reviewers.add(comment.author)
 
