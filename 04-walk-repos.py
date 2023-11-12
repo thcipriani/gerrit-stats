@@ -276,7 +276,22 @@ class MetaCommit(object):
 
     @property
     def is_work_in_progress(self):
-        return self.trailers.get('Work-in-progress', None) is not None
+        """
+        The default for new patches is WIP='false'
+
+        We WIP on new patchsets if it's not the default, so 'true'
+        We care about WIP on every other type, regardless
+        """
+        is_wip = self.trailers.get('Work-in-progress', None) is not None
+        if not is_wip:
+            return False
+
+        default_wip = 'false'
+        patch_wip = self.trailers.get('Work-in-progress', default_wip)
+        new_patch = self.is_patch and self.patch == 1
+        new_patch_with_default_state = new_patch and patch_wip == default_wip
+
+        return is_wip and not new_patch_with_default_state
 
     @property
     def is_patch(self):
@@ -562,17 +577,15 @@ class Patchset(object):
                     self.commits.append(reviewer)
                     self.known_reviewers.add(reviewer.reviewer)
 
-            # These are all updates.
-            # - Patches are important, otherwise they're updates to an existing patch
-            # - Labels > Comments > Reviewers
-            if mc.is_patch:
-                pass
-            elif mc.is_label:
+            if mc.is_work_in_progress:
+                self.commits.append(mc.make_work_in_progress(self))
+
+            # Labels > Comments
+            # show it as a label, even if there are comments
+            if mc.is_label:
                 for label in mc.make_labels(self):
                     self.commits.append(label)
                     self.known_reviewers.add(label.author)
-            elif mc.is_work_in_progress:
-                self.commits.append(mc.make_work_in_progress(self))
             elif mc.is_comment:
                 comment = mc.make_comment(self)
                 self.commits.append(comment)
