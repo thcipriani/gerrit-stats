@@ -9,7 +9,7 @@ all: clean data/last-update.txt data/repos.csv
 	@bash _step-time.sh | tee -a data/step-times.txt
 	python3 03-get-known-reviewers.py
 	@bash _step-time.sh | tee -a data/step-times.txt
-	< data/repos.csv parallel -d "\r\n" -C, 'echo python3 04-walk-repos.py --name {1} --safe-path {2} --repo {3} --new-shas "data/{2}-meta-refs.csv" --known-reviewers "data/{2}-known-reviewers.csv" --out-dir data 2> data/{2}-error.log'
+	< data/repos.csv parallel -d "\r\n" -C, 'python3 04-walk-repos.py --name {1} --safe-path {2} --repo {3} --new-shas "data/{2}-meta-refs.csv" --known-reviewers "data/{2}-known-reviewers.csv" --out-dir data 2> data/{2}-error.log'
 	@bash _step-time.sh | tee -a data/step-times.txt
 	bash 05-create-db.sh 'gerrit.db'
 	@bash _step-time.sh | tee -a data/step-times.txt
