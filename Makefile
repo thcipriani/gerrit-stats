@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-all:# clean data/last-update.txt data/repos.csv
+all: clean data/last-update.txt data/repos.csv
 	mkdir -p data
 	@bash _step-time.sh | tee -a data/step-times.txt
 	< data/repos.csv parallel -d "\r\n" -C, 'bash 01-get-meta-refs.sh {1} {2} {3} "$(shell cat data/last-update.txt)"'

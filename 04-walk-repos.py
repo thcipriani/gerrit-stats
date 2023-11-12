@@ -165,7 +165,7 @@ class Comments(object):
             return False
 
         return [l for l
-                in self._patch_comments()
+                in self.comments
                 if l.lower().endswith('rebased.')] != []
 
     @property
