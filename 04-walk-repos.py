@@ -12,6 +12,12 @@ import pandas as pd
 import pygit2
 
 EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+TRAILER_RE = re.compile(r'(?P<key>[a-zA-Z-_]+)+:\s?(?P<value>.*)')
+LABEL_RE = re.compile(r''.join([
+    r'([Pp]atch [Ss]et \d+:\s+(?P<label>[A-Za-z-]+)(?P<value>[+-]\d+)',
+    r'|',
+    r'[Pp]atch [Ss]et \d+:\s+(?P<oldlabel>[A-Za-z-]+))',
+]))
 
 def create_database(filename):
     conn = sqlite3.connect(filename)
@@ -72,9 +78,8 @@ def get_commit_author_id(commit):
 class Comments(object):
     def __init__(self, commit):
         self.commit = commit
-        self.trailer_re = re.compile(r'(?P<key>[a-zA-Z-_]+)+:\s?(?P<value>.*)')
-        self.comment_label_re = re.compile(
-            r'(Patch Set \d+):\s+(?P<label>[a-zA-Z-]+)(?P<value>[+-]\d)')
+        self.trailer_re = TRAILER_RE
+        self.comment_label_re = LABEL_RE
         self._comment_labels = None
         self._patch = None
         self._comments = None
@@ -128,14 +133,23 @@ class Comments(object):
             if not comment.lower().startswith('patch set %s:' % self.patch):
                 continue
 
-            # Patch Set 1: Verified-1
-            # Patch Set 2: Code-Review+2
+            # New style:
+            #   Patch Set 1: Verified-1
+            #   Patch Set 2: Code-Review+2
+            # Or removing a label, old style:
+            #   Patch Set 2: -Code-Review
+            #   Patch Set 2: -Verified
             m = self.comment_label_re.match(comment)
             if m:
-                label = m.group('label')
+                if m.group('oldlabel'):
+                    label = m.group('oldlabel')[1:]
+                    value = 0
+                elif m.group('label'):
+                    label = m.group('label')
+                    value = int(m.group('value'))
                 if label in known_labels:
                     self._comment_labels.append((
-                        label, int(m.group('value'))
+                        label, value
                     ))
         return self._comment_labels
 
@@ -244,8 +258,8 @@ class MetaCommit(object):
         self.comments = Comments(commit)
         self.patch = self.get_patch()
         self.trailers = self.comments.trailers
+        self.status = self.trailers.get('Status')
         self.reviewer = None
-        self.status = None
         self._votes = None
 
     @property
@@ -258,11 +272,11 @@ class MetaCommit(object):
         has_label = self.trailers.get('Label', False)
         if not has_label:
             has_label = self.comments.has_label_comments
-        if not has_label:
-            return False
-        for _, vote in self.get_votes():
-            if vote != 0:
-                return True
+        return has_label
+
+    @property
+    def is_work_in_progress(self):
+        return self.trailers.get('Work-in-progress', None) is not None
 
     @property
     def is_patch(self):
@@ -297,6 +311,9 @@ class MetaCommit(object):
         if self.comments.is_abandon:
             return Abandon(self.commit, self, ps)
         return Comment(self.commit, self, ps)
+
+    def make_work_in_progress(self, ps):
+        return WorkInProgress(self.commit, self, ps)
 
     def make_patch(self, ps):
         if self.comments.is_rebase:
@@ -337,8 +354,6 @@ class MetaCommit(object):
 
     def make_labels(self, ps):
         for label, vote in self.get_votes():
-            if vote == 0:
-                continue
             if label == 'Code-Review':
                 yield CodeReview(self.commit, self, ps, label, vote)
             elif label == 'Verified':
@@ -381,9 +396,7 @@ class Reviewer(MetaCommit):
     def __init__(self, commit, mc, ps, reviewer_id):
         super(Reviewer, self).__init__(commit)
         self.type = 'reviewer'
-        self.update = True
         self.reviewer = reviewer_id
-        self.status = mc.trailers.get('Status')
         self.label = mc.trailers.get('Label')
         self.message = mc.get_comments()
         self.mc = mc
@@ -399,11 +412,21 @@ class Reviewer(MetaCommit):
             thing += ' (bot)'
         return thing
 
+class WorkInProgress(MetaCommit):
+    def __init__(self, commit, mc, ps):
+        super(WorkInProgress, self).__init__(commit)
+        self.type = 'wip'
+        self.vote = 0 if mc.trailers['Work-in-progress'] == 'false' else 1
+        self.label = mc.trailers.get('Label')
+        self.message = mc.get_comments()
+        self.mc = mc
+        self.ps = ps
+        self.bot_like = mc.is_botlike
+
 class Comment(MetaCommit):
     def __init__(self, commit, mc, ps):
         super(Comment, self).__init__(commit)
         self.type = 'comment'
-        self.update = True
         self.reviewer = self.author
         self.status = mc.trailers.get('Status')
         self.label = mc.trailers.get('Label')
@@ -435,7 +458,6 @@ class Label(MetaCommit):
     def __init__(self, commit, mc, ps, label, vote):
         super(Label, self).__init__(commit)
         self.type = 'label'
-        self.update = True
         self.reviewer = self.author
         self.status = mc.trailers.get('Status')
         self.label = label
@@ -549,6 +571,8 @@ class Patchset(object):
                 for label in mc.make_labels(self):
                     self.commits.append(label)
                     self.known_reviewers.add(label.author)
+            elif mc.is_work_in_progress:
+                self.commits.append(mc.make_work_in_progress(self))
             elif mc.is_comment:
                 comment = mc.make_comment(self)
                 self.commits.append(comment)
