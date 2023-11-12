@@ -7,7 +7,11 @@ import pandas as pd
 from utils import make_safe_filename
 
 ALL_REVIEWERS = 'data/all-known-reviewers.csv'
-if not os.path.exists(ALL_REVIEWERS):
+
+# It shouldn't exist on the first run.
+# It may exist if this is a subsequent run.
+# But unless it ran most of the way through, it's probably empty
+if not os.path.exists(ALL_REVIEWERS) or os.path.getsize(ALL_REVIEWERS) == 0:
     print(f'File {ALL_REVIEWERS} not exist. Might be first run. Continuing...')
     sys.exit(0)
 
