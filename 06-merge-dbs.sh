@@ -19,8 +19,8 @@ insert into changes (
     author_id,
     status,
     type,
-    label,
-    value,
+    vote,
+    reviewer_id,
     bot_like
 ) select
     repo,
@@ -31,8 +31,8 @@ insert into changes (
     author_id,
     status,
     type,
-    label,
-    value,
+    vote,
+    reviewer_id,
     bot_like
 from source.changes;
 DETACH DATABASE source;

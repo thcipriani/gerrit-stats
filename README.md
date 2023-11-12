@@ -48,10 +48,12 @@ This is a terrible local hadoop using gnu parallel and a bunch of shell scripts.
    schema as the individual databases created by `03-walk-repos.py`.
 5. `06-merge-dbs.sh` mashes together all the individual databases into a
    single database.
-6. `07-get-authors.py` takes all the author ids and queries gerrit in batches
+6. `07-get-author-ids.sh` queries the database for all author ids that are
+   not already known.
+6. `08-get-authors.py` takes all the author ids and queries gerrit in batches
    of 50 to get the author's username. It outputs a database of authors and
    their affiliation (`is_wmf`, `is_wmde`, `was_wmf`, `was_wmde`—it's not perfect).
-7. `08-add-user-table.sh` adds new users to the `gerrit.db` database.
+7. `09-add-user-table.sh` adds new users to the `gerrit.db` database.
 
 TODO
 ----
@@ -92,7 +94,17 @@ Biggest +2er by repo:
     group by repo, reviewer
     order by count desc;
 
-Patchsets by non-wmf folks +2'd by wmf folks:
+Reviewer load by repo:
+
+    select
+        repo, count(distinct author_id) as count
+    from changes
+    where type = 'codereivew'
+        and vote = 2
+    group by repo
+    order by count desc;
+
+Patchsets by volunteers(-ish) folks +2'd by non-volunteer(-ish) folks:
 
     WITH earliest_patch AS (
       SELECT
@@ -102,9 +114,11 @@ Patchsets by non-wmf folks +2'd by wmf folks:
         changes
         JOIN authors ON changes.author_id = authors.id
       WHERE
-        type = 'patch'
+        type = 'newpatchset'
         AND authors.is_wmf = 0
         AND authors.was_wmf = 0
+        AND authors.is_wmde = 0
+        AND authors.was_wmde = 0
         AND status = 'new'
         AND repo LIKE 'mediawiki/%'
       GROUP BY
@@ -127,10 +141,26 @@ Patchsets by non-wmf folks +2'd by wmf folks:
     WHERE
       strftime('%Y', datetime(date, 'unixepoch')) = '2023'
       AND strftime('%m', datetime(date, 'unixepoch')) IN ('07', '08', '09')
-      AND type = 'label'
-      AND label = 'c'
-      AND value = 2
-      AND authors.is_wmf = 1;
+      AND type = 'codereview'
+      AND vote = 2
+      AND (authors.is_wmf = 1 or authors.is_wmde = 1);
+
+Patchsets per repo per year:
+
+    SELECT
+      repo,
+      strftime('%Y', datetime(date, 'unixepoch')) AS year,
+      count(*) as count
+    FROM
+      changes
+    WHERE
+      type = 'newpatchset'
+    GROUP BY
+      repo,
+      year
+    ORDER BY
+      repo,
+      year;
 
 Average days to first review by repo:
 
@@ -143,8 +173,7 @@ Average days to first review by repo:
         changes
         JOIN authors ON changes.author_id = authors.id
       WHERE
-        type = 'patch'
-        AND status = 'new'
+        type = 'newpatchset'
       GROUP BY
         patchset
       ORDER BY
@@ -157,8 +186,7 @@ Average days to first review by repo:
         patch_author,
         authors.username AS reviewer,
         type,
-        label,
-        value,
+        vote,
         upload_date,
         MIN(date) AS review_date
       FROM
@@ -168,7 +196,7 @@ Average days to first review by repo:
       WHERE
         (
           /* Code-Review */
-          (type = 'label' AND label = 'c')
+          (type = 'codereview')
           OR
           /* Comment */
           (type = 'comment')

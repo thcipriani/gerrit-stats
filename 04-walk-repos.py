@@ -25,7 +25,8 @@ def create_database(filename):
             author_id INTEGER NOT NULL,
             status TEXT,
             type TEXT NOT NULL,
-            vote TEXT,
+            vote INTEGER,
+            reviewer_id INTEGER,
             bot_like INTEGER NOT NULL
          )""")
 
@@ -34,8 +35,8 @@ def create_database(filename):
 def save_change(commit, conn, repo_name):
     bot_like = 1 if commit.bot_like else 0
     conn.execute("""
-        INSERT INTO changes (repo, patchset, patch, sha, date, author_id, type, status, vote, bot_like)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        INSERT INTO changes (repo, patchset, patch, sha, date, author_id, type, status, vote, reviewer_id, bot_like)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (repo_name,
          commit.ps.patchset,
          commit.patch,
@@ -45,6 +46,7 @@ def save_change(commit, conn, repo_name):
          commit.type,
          commit.status,
          commit.vote,
+         commit.reviewer,
          bot_like))
 
 def do_save(commits, conn, repo_name):
@@ -61,6 +63,9 @@ class Comments(object):
     def __init__(self, commit):
         self.commit = commit
         self.trailer_re = re.compile(r'(?P<key>[a-zA-Z-_]+)+:\s?(?P<value>.*)')
+        self.comment_label_re = re.compile(
+            r'(Patch Set \d+):\s+(?P<label>[a-zA-Z-]+)(?P<value>[+-]\d)')
+        self._comment_labels = None
         self._patch = None
         self._comments = None
         self._trailers = None
@@ -93,6 +98,36 @@ class Comments(object):
     @property
     def has_new_patch_comments(self):
         return len(self._newpatchpatchset_comments()) > 0
+
+    @property
+    def has_label_comments(self):
+        return len(self.label_comments) > 0
+
+    @property
+    def label_comments(self):
+        if self._comment_labels:
+            return self._comment_labels
+
+        self._comment_labels = []
+
+        if not self._status_update_comments():
+            return self._comment_labels
+
+        known_labels = ['Verified', 'Code-Review', 'SUBM']
+        for comment in self.comments:
+            if not comment.lower().startswith('patch set %s:' % self.patch):
+                continue
+
+            # Patch Set 1: Verified-1
+            # Patch Set 2: Code-Review+2
+            m = self.comment_label_re.match(comment)
+            if m:
+                label = m.group('label')
+                if label in known_labels:
+                    self._comment_labels.append((
+                        label, int(m.group('value'))
+                    ))
+        return self._comment_labels
 
     @property
     def comments(self):
@@ -195,6 +230,9 @@ class MetaCommit(object):
         self.comments = Comments(commit)
         self.patch = self.get_patch()
         self.trailers = self.comments.trailers
+        self.reviewer = None
+        self.status = None
+        self._votes = None
 
     @property
     def is_reviewer(self):
@@ -203,7 +241,9 @@ class MetaCommit(object):
 
     @property
     def is_label(self):
-        has_label = self.trailers.get('Label', None) is not None
+        has_label = self.trailers.get('Label', False)
+        if not has_label:
+            has_label = self.comments.has_label_comments
         if not has_label:
             return False
         for _, vote in self.get_votes():
@@ -222,7 +262,7 @@ class MetaCommit(object):
         Inline comments, but not a new patchset
         Or patch comments
         """
-        self.has_inline_comments() or \
+        return self.has_inline_comments() or \
             self.comments.has_real_comments
 
     @property
@@ -258,6 +298,15 @@ class MetaCommit(object):
             yield Reviewer(self.commit, self, ps, reviewer_id)
 
     def get_votes(self):
+        if self._votes:
+            return self._votes
+        if self.trailers.get('Label'):
+            self._votes = [(l,v) for l,v in self._get_votes_from_label()]
+        else:
+            self._votes = self.comments.label_comments
+        return self._votes
+
+    def _get_votes_from_label(self):
         labels = self.trailers['Label'].splitlines()
         label_objs = []
         for label in labels:
@@ -277,11 +326,11 @@ class MetaCommit(object):
             if vote == 0:
                 continue
             if label == 'Code-Review':
-                yield CodeReview(self.commit, self, ps, vote)
+                yield CodeReview(self.commit, self, ps, label, vote)
             elif label == 'Verified':
-                yield Verified(self.commit, self, ps, vote)
+                yield Verified(self.commit, self, ps, label, vote)
             elif label == 'SUBM':
-                yield Submit(self.commit, self, ps, vote)
+                yield Submit(self.commit, self, ps, label, vote)
             else:
                 raise('Unknown label %s' % label)
 
@@ -327,6 +376,14 @@ class Reviewer(MetaCommit):
         self.ps = ps
         self.bot_like = mc.is_botlike
 
+    def __repr__(self):
+        thing = '<Reviewer (%s %s)>' % (self.type, self.reviewer)
+        thing += ' addedby %s' % self.author
+        thing += ' (patch %s)' % self.patch
+        thing += ' (status %s)' % self.status
+        if self.bot_like:
+            thing += ' (bot)'
+        return thing
 
 class Comment(MetaCommit):
     def __init__(self, commit, mc, ps):
@@ -342,9 +399,10 @@ class Comment(MetaCommit):
         self.bot_like = mc.is_botlike
 
     def __repr__(self):
-        thing = '<Comment (%s) %s>' % (self.type, self.reviewer)
+        thing = '<Comment (%s)>' % self.type
         thing += ' addedby %s' % self.author
-        thing += ' (%s)' % self.status
+        thing += ' (patch %s)' % self.patch
+        thing += ' (status %s)' % self.status
         if self.bot_like:
             thing += ' (bot)'
         return thing
@@ -354,46 +412,48 @@ class Recheck(Comment):
         super(Recheck, self).__init__(commit, mc, ps)
         self.type = 'recheck'
 
-class Label(MetaCommit):
+class Abandon(Comment):
     def __init__(self, commit, mc, ps):
+        super(Abandon, self).__init__(commit, mc, ps)
+        self.type = 'abandon'
+
+class Label(MetaCommit):
+    def __init__(self, commit, mc, ps, label, vote):
         super(Label, self).__init__(commit)
         self.type = 'label'
         self.update = True
         self.reviewer = self.author
         self.status = mc.trailers.get('Status')
-        self.label = mc.trailers['Label']
+        self.label = label
         self.message = mc.get_comments()
         self.mc = mc
         self.ps = ps
         self.bot_like = mc.is_botlike
-        self.vote = 0
+        self.vote = vote
         self.type = '?'
 
 class CodeReview(Label):
-    def __init__(self, commit, mc, ps, vote):
-        super(CodeReview, self).__init__(commit, mc, ps)
+    def __init__(self, commit, mc, ps, label, vote):
+        super(CodeReview, self).__init__(commit, mc, ps, label, vote)
         self.type = 'codereview'
-        self.vote = vote
 
     def __repr__(self):
         return '<CodeReview %s> by %s (%s)' % (
             self.vote, self.author, self.status)
 
 class Verified(Label):
-    def __init__(self, commit, mc, ps, vote):
-        super(Verified, self).__init__(commit, mc, ps)
+    def __init__(self, commit, mc, ps, label, vote):
+        super(Verified, self).__init__(commit, mc, ps, label, vote)
         self.type = 'verified'
-        self.vote = vote
 
     def __repr__(self):
         return '<Verified %s> by %s (%s)' % (
             self.vote, self.author, self.status)
 
 class Submit(Label):
-    def __init__(self, commit, mc, ps, vote):
-        super(Submit, self).__init__(commit, mc, ps)
+    def __init__(self, commit, mc, ps, label, vote):
+        super(Submit, self).__init__(commit, mc, ps, label, vote)
         self.type = 'submit'
-        self.vote = vote
 
     def __repr__(self):
         return '<Submit %s> by %s (%s)' % (

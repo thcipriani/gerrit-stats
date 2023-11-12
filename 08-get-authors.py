@@ -12,7 +12,7 @@ SESSION = requests.Session()
 def create_db(output_file):
     conn = sqlite3.connect(output_file)
     c = conn.cursor()
-    c.execute('''CREATE TABLE authors (
+    c.execute('''CREATE TABLE if not exists authors (
               id integer primary key,
               username text not null,
               is_wmf integer not null,

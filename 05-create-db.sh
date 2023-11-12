@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS changes (
     author_id INTEGER NOT NULL,
     status TEXT,
     type TEXT NOT NULL,
-    label TEXT,
-    value INTEGER,
+    vote INTEGER,
+    reviewer_id INTEGER,
     bot_like INTEGER NOT NULL
 );
 EOF
