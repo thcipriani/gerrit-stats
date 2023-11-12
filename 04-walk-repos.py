@@ -5,6 +5,7 @@ import collections
 import os
 import re
 import sqlite3
+import sys
 
 import pandas as pd
 
@@ -54,9 +55,18 @@ def do_save(commits, conn, repo_name):
         save_change(commit, conn, repo_name)
 
 def get_commit_author_id(commit):
-    if commit.author.email == 'gerrit@wikimedia.org':
+    try:
+        return int(commit.author.email.split('@')[0])
+    except ValueError as e:
+        # TODO: Known problem emails
+        # - gerrit@wikimedia.org
+        # - server@googlesource.com
+        # - ...probably any other repo we import from any other gerrit
+        print(
+            f'Non-numeric commit author: {commit.author.email}',
+            file=sys.stderr
+        )
         return 0
-    return int(commit.author.email.split('@')[0])
 
 
 class Comments(object):
@@ -176,7 +186,11 @@ class Comments(object):
                 self._patch_from_comments()
             )
             if patch is not None:
-                patch = int(patch)
+                try:
+                    patch = int(patch)
+                except ValueError:
+                    # Happens when patch is like '1 (published)'
+                    patch = int(patch.split(' ')[0])
             self._patch = patch
         return self._patch
 
@@ -463,7 +477,7 @@ class Patch(MetaCommit):
     def __init__(self, commit, mc, ps):
         super(Patch, self).__init__(commit)
         self.type = 'patch'
-        self.patch = int(mc.trailers['Patch-set'])
+        self.patch = mc.comments.patch
         self.status = mc.trailers.get('Status')
         self.change_id = mc.trailers.get('Change-id')
         self.target_branch = mc.trailers.get('Branch')
