@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # See if authors table exists
-output=$(echo 'select * from authors limit 1;' | sqlite3 gerrit.db)
+output=$(echo 'select * from authors limit 1;' | sqlite3 gerrit.db 2> /dev/null || :)
 
 if [[ -z "$output" ]]; then
     echo 'No authors table found...'

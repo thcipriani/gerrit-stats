@@ -264,8 +264,7 @@ class MetaCommit(object):
 
     @property
     def is_reviewer(self):
-        reviewer = self.trailers.get('Reviewer', None)
-        return reviewer is not None
+        return self.trailers.get('Reviewer', None) is not None
 
     @property
     def is_label(self):
@@ -334,6 +333,7 @@ class MetaCommit(object):
         if self.comments.is_rebase:
             return Rebase(self.commit, self, ps)
         if self.patch == 1:
+            ps.known_reviewers.add(self.author)
             return NewPatchSet(self.commit, self, ps)
         return Patch(self.commit, self, ps)
 
@@ -365,6 +365,14 @@ class MetaCommit(object):
                 # - Label: Code-Review=+2
                 # - Label: Code-Review=+2 Gerrit User <gerrit@wikimedia>
                 vote = int(vote.split(' ')[0])
+                # In the olden days, this meant a reviewer was added
+                # But this is not true from the label_comments. The commit
+                # looked like:
+                #
+                #   Patch-set: 1
+                #   Label: Code-Review=0
+                if vote == 0:
+                    continue
             yield label, vote
 
     def make_labels(self, ps):
@@ -565,28 +573,36 @@ class Patchset(object):
             # 0 will only be here if it's the first time we've run this
             if 0 not in unknown and commit.hex not in unknown:
                 continue
+            maybe_comment = True
             mc = MetaCommit(commit)
             # print('    - Processing commit %s' % mc.sha)
+            # There may be patches that add reviewers and set labels and mark wip
             if mc.is_patch:
                 patch = mc.make_patch(self)
                 self.patches.append(patch)
                 self.commits.append(patch)
 
+            # Comments may add reviewers
             if mc.is_reviewer:
                 for reviewer in mc.make_reviewers(self):
                     self.commits.append(reviewer)
                     self.known_reviewers.add(reviewer.reviewer)
 
+            # WIP > Comments
+            # Don't show as a comment if it's a WIP
             if mc.is_work_in_progress:
                 self.commits.append(mc.make_work_in_progress(self))
+                maybe_comment = False
 
             # Labels > Comments
-            # show it as a label, even if there are comments
+            # Don't show as a comment if it's a label
             if mc.is_label:
                 for label in mc.make_labels(self):
                     self.commits.append(label)
                     self.known_reviewers.add(label.author)
-            elif mc.is_comment:
+                maybe_comment = False
+
+            if maybe_comment and mc.is_comment:
                 comment = mc.make_comment(self)
                 self.commits.append(comment)
                 self.known_reviewers.add(comment.author)
