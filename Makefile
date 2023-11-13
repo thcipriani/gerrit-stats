@@ -14,6 +14,8 @@ all: clean data/last-update.txt data/repos.csv
 	bash 05-create-db.sh 'gerrit.db'
 	@bash _step-time.sh | tee -a data/step-times.txt
 	< <(ls data/*.db) bash 06-merge-dbs.sh 'gerrit.db'
+
+authors: gerrit.db
 	@bash _step-time.sh | tee -a data/step-times.txt
 	bash 07-get-author-ids.sh 'gerrit.db'
 	@bash _step-time.sh | tee -a data/step-times.txt
@@ -22,6 +24,14 @@ all: clean data/last-update.txt data/repos.csv
 	bash 09-add-user-table.sh 'gerrit.db' 'data/authors.db'
 	@bash _step-time.sh | tee -a data/step-times.txt
 	echo 'select date from changes order by date desc limit 1;' | sqlite3 gerrit.db > LAST_RUN
+
+deployment: gerrit.db
+	bash 10-add-deployment-table.sh 'gerrit.db' 'submodules/train-stats/data/train.db'
+
+logfile: gerrit.db
+	# database, output file, start date, end date
+	bash 11-generate-log.sh gerrit.db log-$(shell date -I)-10.csv 2021-01-01 $(shell date -I)
+	bash 12-clean-log.sh log-$(shell date -I)-10.csv
 
 clean:
 	rm -rf data

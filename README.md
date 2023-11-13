@@ -54,17 +54,7 @@ This is a terrible local hadoop using gnu parallel and a bunch of shell scripts.
    of 50 to get the author's username. It outputs a database of authors and
    their affiliation (`is_wmf`, `is_wmde`, `was_wmf`, `was_wmde`—it's not perfect).
 7. `09-add-user-table.sh` adds new users to the `gerrit.db` database.
-
-TODO
-----
-
-* Take reviewer and owner ids from gerrit and map to usernames in a new users table.
-* Add a `06-stats.py` that generates interesting stats from the database
-
-Oddities
---------
-
-- New patches by jenkins-bot are rebases
+9. `10-add-deployment-table.sh` adds deployment data to the `gerrit.db` database.
 
 Fun queries
 -----------

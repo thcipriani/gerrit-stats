@@ -1,0 +1,3 @@
+[submodule "submodules/train-stats"]
+	path = submodules/train-stats
+	url = https://github.com/thcipriani/train-stats
