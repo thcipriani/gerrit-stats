@@ -21,4 +21,4 @@ docker run -it --rm \
     -v $(pwd)/data:/src/data \
     -v /srv/git:/srv/git:ro \
     devel-stats \
-    update.sh "w000t!"
+    /src/update.sh "w000t!"

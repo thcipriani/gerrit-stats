@@ -13,6 +13,7 @@ import pygit2
 
 EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 TRAILER_RE = re.compile(r'(?P<key>[a-zA-Z-_]+)+:\s?(?P<value>.*)')
+START_JOB_RE = re.compile(r'Starting (?P<pipeline>.*) jobs.')
 LABEL_RE = re.compile(r''.join([
     r'([Pp]atch [Ss]et \d+:\s+(?P<label>[A-Za-z-]+)(?P<value>[+-]\d+)',
     r'|',
@@ -80,6 +81,9 @@ class Comments(object):
         self.commit = commit
         self.trailer_re = TRAILER_RE
         self.comment_label_re = LABEL_RE
+        self.start_job_re = START_JOB_RE
+        self.result = None
+        self._pipeline = None
         self._comment_labels = None
         self._patch = None
         self._comments = None
@@ -174,6 +178,65 @@ class Comments(object):
         return [l for l
                 in self._patch_comments()
                 if l.lower().startswith('recheck')] != []
+
+    @property
+    def is_starting_pipeline(self):
+        if not self.is_status_update:
+            return False
+        if self._pipeline is not None:
+            return self._pipeline != ''
+
+        for line in self._patch_comments():
+            m = self.start_job_re.match(line)
+            if m:
+                self._pipeline = m.group('pipeline')
+                return True
+
+        self._pipeline = ''
+        return False
+
+    @property
+    def pipeline(self):
+        if self._pipeline is None:
+            self.is_starting_pipeline
+        return self._pipeline
+
+    @property
+    def is_performance(self):
+        if not self.is_status_update:
+            return False
+        perf_comments = [l.lower() for l
+                in self._patch_comments()
+                if (
+                    l.lower().startswith('performance checks ok') or
+                    l.lower().startswith('this patch might be adding a page load cost')
+                )]
+        self.result = sum([1 for x in perf_comments if 'ok' in x])
+        return perf_comments != []
+
+    @property
+    def is_coverage(self):
+        if not self.is_status_update:
+            return False
+        cov_comments = [l.lower() for l
+                in self._patch_comments()
+                if (
+                    l.lower().startswith('php test coverage increased') or
+                    l.lower().startswith('php test coverage decreased')
+                )]
+        self.result = sum([1 for x in cov_comments if 'increase' in x])
+        return cov_comments != []
+
+    @property
+    def is_postmerge(self):
+        if not self.is_status_update:
+            return False
+        pm_comments = [l.lower() for l
+                in self._patch_comments()
+                if l.lower().startswith('post-merge build ')]
+        self.result = sum([1 for x in pm_comments if 'succeed' in x])
+        return pm_comments != []
+
 
     @property
     def is_abandon(self):
@@ -320,6 +383,15 @@ class MetaCommit(object):
         return self.comments.patch
 
     def make_comment(self, ps):
+        if self.author == 75:
+            if self.comments.is_starting_pipeline:
+                return SubmitStart(self.commit, self, ps, self.comments.pipeline)
+            if self.comments.is_performance:
+                return PerformanceResult(self.commit, self, ps, self.comments.result)
+            if self.comments.is_coverage:
+                return CoverageResult(self.commit, self, ps, self.comments.result)
+            if self.comments.is_postmerge:
+                return PostMerge(self.commit, self, ps, self.comments.result)
         if self.comments.is_recheck:
             return Recheck(self.commit, self, ps)
         if self.comments.is_abandon:
@@ -377,6 +449,7 @@ class MetaCommit(object):
 
     def make_labels(self, ps):
         for label, vote in self.get_votes():
+            self.vote = vote
             if label == 'Code-Review':
                 yield CodeReview(self.commit, self, ps, label, vote)
             elif label == 'Verified':
@@ -471,6 +544,30 @@ class Recheck(Comment):
     def __init__(self, commit, mc, ps):
         super(Recheck, self).__init__(commit, mc, ps)
         self.type = 'recheck'
+
+class SubmitStart(Comment):
+    def __init__(self, commit, mc, ps, pipeline):
+        super(SubmitStart, self).__init__(commit, mc, ps)
+        self.type = 'submitstart'
+        self.label = pipeline
+
+class PerformanceResult(Comment):
+    def __init__(self, commit, mc, ps, result):
+        super(PerformanceResult, self).__init__(commit, mc, ps)
+        self.type = 'performancecheck'
+        self.vote = result
+
+class CoverageResult(Comment):
+    def __init__(self, commit, mc, ps, result):
+        super(CoverageResult, self).__init__(commit, mc, ps)
+        self.type = 'coveragecheck'
+        self.vote = result
+
+class PostMerge(Comment):
+    def __init__(self, commit, mc, ps, result):
+        super(PostMerge, self).__init__(commit, mc, ps)
+        self.type = 'postmergecheck'
+        self.vote = result
 
 class Abandon(Comment):
     def __init__(self, commit, mc, ps):
@@ -600,7 +697,23 @@ class Patchset(object):
                 for label in mc.make_labels(self):
                     self.commits.append(label)
                     self.known_reviewers.add(label.author)
-                maybe_comment = False
+
+                # This could be a "starting pipeline" comment
+                #
+                # But that only happens if
+                #   - the label is 0
+                #   - the author is jenkins-bot
+                #
+                # if this is *not* a label by jenkins-bot: NOT a comment
+                # if this *is* a label vote by jenkins-bot
+                # then check if the vote is 0:
+                #    if so, it might be an comment worth recording
+                #
+                # Code is far from self-documenting here...
+                if mc.author != 75 or (
+                     mc.author == 75 and sum([v[1] for v in mc.get_votes()]) != 0
+                ):
+                    maybe_comment = False
 
             if maybe_comment and mc.is_comment:
                 comment = mc.make_comment(self)
