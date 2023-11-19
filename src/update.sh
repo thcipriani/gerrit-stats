@@ -22,6 +22,7 @@ commit() {
 }
 
 submodules() {
+    git submodule update --init --recursive
     git -C "$SCRIPT_DIR"/submodules/train-stats fetch || :
     git -C "$SCRIPT_DIR"/submodules/train-stats checkout --force origin/main || :
     commit 'Bump train-stats' || :

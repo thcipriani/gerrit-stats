@@ -1,0 +1,3 @@
+pandas
+pygit2
+requests

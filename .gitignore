@@ -1,8 +1,8 @@
-LAST_RUN
+src/LAST_RUN
 data/*.csv
 data/*.db
 data/*.txt
-*.db
+src/*.db
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

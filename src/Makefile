@@ -34,7 +34,7 @@ logfile: gerrit.db
 	bash 12-clean-log.sh log-$(shell date -I)-10.csv
 
 clean:
-	rm -rf data
+	rm -rf data/*.db data/*.csv data/*.log data/*.txt
 	mkdir -p data
 	touch data/.gitkeep
 	@bash _step-time.sh | tee -a data/step-times.txt
