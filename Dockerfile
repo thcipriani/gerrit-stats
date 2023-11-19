@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-virtualenv \
     parallel \
+    curl \
+    jq \
     myrepos \
     sqlite3 \
     git \
@@ -16,7 +18,8 @@ COPY src/requirements.txt /requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip && \
     pip3 install --break-system-packages --no-cache-dir -r /requirements.txt
 
-RUN git config --file /etc/gitconfig safe.directory '*'
+RUN git config --file /etc/gitconfig safe.directory '*' && \
+    echo '/srv/git/.mrconfig' > /.mrtrust
 
 # Mount the code from ./src/ into the container at /src/
 # Mount the data directory into the container at /var/log/data

@@ -65,7 +65,7 @@
 
     - name: Add update-srv-git script
       template:
-        src: templates/update-srv-git.j2  # Path relative to your Ansible project directory
+        src: templates/update-srv-git.j2
         dest: /usr/local/bin/update-srv-git
         owner: root
         group: project-devel-stats
@@ -73,15 +73,23 @@
 
     - name: Add update-gerrit-stats script
       template:
-        src: templates/update-gerrit-stats.j2  # Path relative to your Ansible project directory
+        src: templates/update-gerrit-stats.j2
         dest: /usr/local/bin/update-gerrit-stats
         owner: root
         group: root
         mode: "0755"
 
+    - name: Add update-srv-git-docker script
+      template:
+        src: templates/update-srv-git-docker.j2
+        dest: /usr/local/bin/update-srv-git-docker
+        owner: root
+        group: project-devel-stats
+        mode: "0755"
+
     - name: Allow devel-stats to run update-srv-git and update-gerrit-stats
       lineinfile:
         path: /etc/sudoers.d/update-gerrit-stats
-        line: "{{ dev_stats.username }} ALL=(root) NOPASSWD: /usr/local/bin/update-srv-git /usr/local/bin/update-gerrit-stats"
+        line: "{{ dev_stats.username }} ALL=(root) NOPASSWD: /usr/local/bin/update-srv-git-docker, /usr/local/bin/update-gerrit-stats"
         create: yes
         validate: 'visudo -cf %s'

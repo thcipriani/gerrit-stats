@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Put in place by https://github.com/thcipriani/gerrit-stats ansible
+
+set -euo pipefail
+
+PROJECT_DEVEL_STATS_GID=55627
+
+if echo " $(groups) " | fgrep -q ' docker '; then
+    echo "User is in docker group. Continuing as current user."
+    DOCKER_USER="$(id -u):$PROJECT_DEVEL_STATS_GID"
+else
+    if [ -z "${SUDO_UID:-}" ] || ! [ $(id -u) -eq 0 ]; then
+        echo "User is not in docker group and not running with sudo. Aborting."
+        exit 1
+    fi
+    DOCKER_USER="$SUDO_UID:$PROJECT_DEVEL_STATS_GID"
+fi
+
+STATS_DIR="{{ dev_stats.home }}/{{ git_repo.path }}"
+
+docker build -t devel-stats -f "$STATS_DIR"/Dockerfile "$STATS_DIR"
+docker run -it --rm \
+    --user "$DOCKER_USER" \
+    -v /usr/local/bin/update-srv-git:/usr/local/bin/update-srv-git \
+    -v /srv/git:/srv/git \
+    devel-stats \
+    /usr/local/bin/update-srv-git
