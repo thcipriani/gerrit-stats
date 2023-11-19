@@ -21,13 +21,6 @@ commit() {
     git -C "$SCRIPT_DIR" commit -a -m "$msg"
 }
 
-submodules() {
-    git submodule update --init --recursive
-    git -C "$SCRIPT_DIR"/submodules/train-stats fetch || :
-    git -C "$SCRIPT_DIR"/submodules/train-stats checkout --force origin/main || :
-    commit 'Bump train-stats' || :
-}
-
 newversion() {
     local version python
     version="$1"
@@ -57,7 +50,6 @@ main() {
         exit 0
     fi
 
-    submodules
     cd "$SCRIPT_DIR"
     make
     make authors

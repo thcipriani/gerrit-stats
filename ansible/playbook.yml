@@ -1,0 +1,87 @@
+---
+- name: Setup stats.devel-stats
+  hosts: devel_stats
+  become: yes
+
+  vars:
+    dev_stats:
+      username: devel-stats
+      home: /srv/devel-stats
+      shell: /bin/bash
+    git_repo:
+      url: https://github.com/thcipriani/gerrit-stats.git
+      path: gerrit-stats
+
+  tasks:
+    - name: Create devel-stats user
+      user:
+        name: "{{ dev_stats.username }}"
+        home: "{{ dev_stats.home }}"
+        shell: "{{ dev_stats.shell }}"
+        createhome: yes
+        state: present
+
+    # Needed to run anything with "become"
+    - name: Allow project members to run things as devel-stats (needed for become)
+      lineinfile:
+        path: /etc/sudoers.d/project-devel-stats
+        line: "%project-devel-stats ALL=(devel-stats) NOPASSWD: ALL"
+        create: yes
+        validate: 'visudo -cf %s'
+
+    # ACL for <https://docs.ansible.com/ansible-core/2.15/playbook_guide/playbooks_privilege_escalation.html#resolving-temporary-file-error-messages>
+    - name: Install Docker + ACL
+      apt:
+        name:
+          - docker.io
+          - acl
+        state: present
+        update_cache: yes
+
+    - name: Set default umask for the user
+      become: yes
+      become_user: "{{ dev_stats.username }}"
+      become_flags: -H -n
+      lineinfile:
+        dest: "{{ dev_stats.home }}/.bashrc"
+        line: "umask 002"
+        create: yes
+        owner: "{{ dev_stats.username }}"
+        group: "{{ dev_stats.username }}"
+        mode: "0644"
+
+    - name: Clone git repo into user's homedir
+      become: yes
+      become_user: "{{ dev_stats.username }}"
+      become_flags: -H -n
+      git:
+        repo: "{{ git_repo.url }}"
+        dest: "{{ dev_stats.home }}/{{ git_repo.path }}"
+        clone: yes
+        update: no
+        force: yes
+        accept_hostkey: yes
+        depth: 1
+
+    - name: Add update-srv-git script
+      template:
+        src: templates/update-srv-git.j2  # Path relative to your Ansible project directory
+        dest: /usr/local/bin/update-srv-git
+        owner: root
+        group: project-devel-stats
+        mode: "0755"
+
+    - name: Add update-gerrit-stats script
+      template:
+        src: templates/update-gerrit-stats.j2  # Path relative to your Ansible project directory
+        dest: /usr/local/bin/update-gerrit-stats
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Allow devel-stats to run update-srv-git and update-gerrit-stats
+      lineinfile:
+        path: /etc/sudoers.d/update-gerrit-stats
+        line: "{{ dev_stats.username }} ALL=(root) NOPASSWD: /usr/local/bin/update-srv-git /usr/local/bin/update-gerrit-stats"
+        create: yes
+        validate: 'visudo -cf %s'

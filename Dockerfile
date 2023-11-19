@@ -16,6 +16,8 @@ COPY src/requirements.txt /requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip && \
     pip3 install --break-system-packages --no-cache-dir -r /requirements.txt
 
+RUN git config --file /etc/gitconfig safe.directory '*'
+
 # Mount the code from ./src/ into the container at /src/
 # Mount the data directory into the container at /var/log/data
 # Mount the git code into the container at /srv/git
