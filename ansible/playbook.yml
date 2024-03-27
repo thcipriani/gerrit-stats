@@ -35,6 +35,7 @@
         name:
           - docker.io
           - acl
+          - tmux
         state: present
         update_cache: yes
 

@@ -436,7 +436,7 @@ class MetaCommit(object):
                 # Got to handle:
                 # - Label: Code-Review=+2
                 # - Label: Code-Review=+2 Gerrit User <gerrit@wikimedia>
-                vote = int(vote.split(' ')[0])
+                vote = int(vote.split(' ')[0].lstrip('+').rstrip(','))
                 # In the olden days, this meant a reviewer was added
                 # But this is not true from the label_comments. The commit
                 # looked like:
