@@ -33,6 +33,6 @@ insert into deploys (
     patchset
 from source.train join source.patch on source.train.id = source.patch.train_id;
 DETACH DATABASE source;
-CREATE INDEX idx_patchset ON changes (patchset);
+CREATE INDEX if not exists idx_patchset ON changes (patchset);
 EOF
 echo "done"
