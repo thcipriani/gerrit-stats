@@ -6,6 +6,7 @@ GERRIT_DB="$1"
 TRAIN_DB="$2"
 
 sqlite3 "$GERRIT_DB" <<EOF
+DROP TABLE if exists deploys;
 CREATE TABLE if not exists deploys (
     id integer primary key,
     version text not null,

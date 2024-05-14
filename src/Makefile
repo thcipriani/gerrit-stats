@@ -26,7 +26,7 @@ authors: gerrit.db
 	echo 'select date from changes order by date desc limit 1;' | sqlite3 gerrit.db > LAST_RUN
 
 deployment: gerrit.db
-	bash 10-add-deployment-table.sh 'gerrit.db' 'submodules/train-stats/data/train.db'
+	bash 10-add-deployment-table.sh 'gerrit.db' 'train-stats/data/train.db'
 
 logfile: gerrit.db
 	# database, output file, start date, end date
