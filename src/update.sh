@@ -22,7 +22,7 @@ commit() {
 }
 
 newversion() {
-    local version python
+    local version p
     version="$1"
     p=python3
     if [ -d "$SCRIPT_DIR"/venv ]; then
@@ -45,9 +45,14 @@ update_trains() {
 }
 
 main() {
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    if [[ "${1:-gogogo}" == "-h" || "${1:-gogogo}" == "--help" ]]; then
         usage
         exit 0
+    fi
+
+    if [ -z "$VIRTUAL_ENV" ]; then
+        echo "No VENV set. Exiting."
+        exit 1
     fi
 
     cd "$SCRIPT_DIR"
