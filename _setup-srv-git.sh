@@ -23,4 +23,5 @@ done < <(curl -sL https://gerrit.wikimedia.org/r/projects/?all | \
     jq -r '.|to_entries|map(select(.value.state == "ACTIVE"))|.[].key') >> .mrconfig
 
 echo 'Updating mirrors...'
-mr update
+echo 'Run mr checkout to clone all repos'
+echo 'Run mr update to update all repos'

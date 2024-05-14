@@ -8,9 +8,11 @@ Usage
 
 Setup a local clone of every public repo on gerrit.wikimedia.org.
 
-I use the [myrepos][mr] tool `mr` to do this:
+I use the [myrepos][mr] tool `mr` to do this.
 
-First I create an .mrconfig file:
+    sudo apt install myrepos perl-doc
+
+Create an .mrconfig file:
 
     mkdir -p /srv/git
     cp ./_setup-srv_git.sh /srv/git/update.sh
