@@ -36,6 +36,7 @@
           - docker.io
           - acl
           - tmux
+          - git-lfs
         state: present
         update_cache: yes
 
